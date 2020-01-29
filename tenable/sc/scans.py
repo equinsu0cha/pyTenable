@@ -74,6 +74,14 @@ class ScanAPI(SCEndpoint):
                 'email_launch', kw['email_launch'], bool, default=False)).lower()
             del(kw['email_launch'])
 
+        if 'host_tracking' in kw:
+            # As host_tracking is effectively a string interpretation of a bool
+            # value, if the snake case equivalent is used, we will convert it
+            # into the expected parameter and remove the snake cased version.
+            kw['dhcpTracking'] = str(self._check(
+                'host_tracking', kw['host_tracking'], bool, default=False)).lower()
+            del(kw['host_tracking'])
+
         if 'timeout' in kw:
             # timeout is the checked version of timeoutAction.  If timeout is
             # specified, we will check to make sure that the action is a valid
@@ -111,7 +119,11 @@ class ScanAPI(SCEndpoint):
             # maxScanTime is a integer encased in a string value.  the snake
             # cased version of that expects an integer and converts it into the
             # string equivalent.
-            kw['maxScanTime'] = str(self._check('max_time', kw['max_time'], int))
+            kw['maxScanTime'] = self._check('max_time', kw['max_time'], int)
+            if kw['maxScanTime'] <= 0:
+                kw['maxScanTime'] = 'unlimited';
+            else:
+                kw['maxScanTime'] = str(kw['maxScanTime'])
             del(kw['max_time'])
 
         if 'auto_mitigation' in kw:
@@ -240,6 +252,7 @@ class ScanAPI(SCEndpoint):
                 Should DHCP host tracking be enabled?  The default is False.
             max_time (int, optional):
                 The maximum amount of time that the scan may run in seconds.
+                ``0`` or less for unlimited.
                 The default is ``3600`` seconds.
             policy_id (int, optional):
                 The policy id to use for a policy-based scan.
@@ -348,6 +361,7 @@ class ScanAPI(SCEndpoint):
                 Should DHCP host tracking be enabled?
             max_time (int, optional):
                 The maximum amount of time that the scan may run in seconds.
+                ``0`` or less for unlimited.
             name (str, optional): The name of the scan.
             policy (int, optional):
                 The policy id to use for a policy-based scan.
@@ -466,7 +480,7 @@ class ScanAPI(SCEndpoint):
             ...     running['scanResult']['id']))
         '''
         payload = dict()
-        if diagnostic_target and diagnostic_passwsord:
+        if diagnostic_target and diagnostic_password:
             payload['diagnosticTarget'] = self._check(
                 'diagnostic_target', diagnostic_target, str)
             payload['diagnosticPassword'] = self._check(

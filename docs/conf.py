@@ -18,6 +18,8 @@ autodoc_mock_imports = [
     'dateutil.parser',
     'semver',
     'docker',
+    'defusedxml',
+    'ipaddress',
 ]
 
 import os, sys, datetime

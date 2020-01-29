@@ -1,7 +1,8 @@
 '''
 .. autoclass:: APIResultsIterator
 '''
-import requests, sys, logging, re, time, logging, warnings, json
+import requests, sys, platform, logging, re, time, logging, warnings, json
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from .errors import *
 from . import __version__, __author__
 
@@ -308,7 +309,9 @@ class APISession(object):
             other API calls.
     '''
     _restricted_paths = dict()
-    _ua_identity = None
+    _vendor = 'unknown'
+    _product = 'unknown'
+    _build = 'unknown'
     _proxies = None
     _error_codes = {
         400: InvalidInputError,
@@ -336,7 +339,8 @@ class APISession(object):
     '''
 
     def __init__(self, url=None, retries=None, backoff=None,
-                 ua_identity=None, session=None, proxies=None):
+                 ua_identity=None, session=None, proxies=None,
+                 vendor=None, product=None, build=None):
         if url:
             self._url = url
         if retries and isinstance(retries, int):
@@ -344,9 +348,15 @@ class APISession(object):
         if backoff and isinstance(backoff, float):
             self._backoff = backoff
         if ua_identity and isinstance(ua_identity, str):
-            self._ua_identity = ua_identity
+            self._product = ua_identity
         if proxies and isinstance(proxies, dict):
             self._proxies = proxies
+        if vendor:
+            self._vendor = vendor
+        if product:
+            self._product = product
+        if build:
+            self._build = build
         self._log = logging.getLogger('{}.{}'.format(
             self.__module__, self.__class__.__name__))
         self._build_session(session)
@@ -355,10 +365,7 @@ class APISession(object):
         '''
         Requests session builder
         '''
-        if self._ua_identity:
-            identity = self._ua_identity
-        else:
-            identity = 'pyTenable/{}'.format(__version__)
+
 
         if session:
             self._session = session
@@ -366,9 +373,39 @@ class APISession(object):
             self._session = requests.Session()
         if self._proxies:
             self._session.proxies.update(self._proxies)
+
+        # Update the User-Agent string with the information necessary.
+        uname = platform.uname()
         self._session.headers.update({
-            'User-Agent': '{} (pyTenable/{}; Python/{})'.format(identity,
-                __version__, '.'.join([str(i) for i in sys.version_info][0:3])),
+            'User-Agent': ' '.join([
+                'Integration/1.0 ({}; {}; Build/{})'.format(
+
+                    # The vendor name for the integration
+                    self._vendor,
+
+                    # The product name of the integration
+                    self._product,
+
+                    # The build of the integration
+                    self._build
+                ),
+                'pyTenable/{} (pyTenable/{}; Python/{}; {}/{})'.format(
+                    # The version of the library being used
+                    __version__,
+
+                    # The version of Restfly
+                    __version__,
+
+                    # The python version string
+                    '.'.join([str(i) for i in sys.version_info][0:3]),
+
+                    # The source OS
+                    uname[0],
+
+                    # The source Arch
+                    uname[-2]
+                ),
+            ])
         })
 
     def _resp_error_check(self, response, **kwargs): #stub
@@ -398,62 +435,77 @@ class APISession(object):
             del(kwargs['retry_on'])
 
         while retries <= self._retries:
-            if (('params' in kwargs and kwargs['params'])
-              or ('json' in kwargs and kwargs['json'])):
-                if path not in self._restricted_paths:
-                    # If the path is not one of the paths that would contain
-                    # sensitive data (such as login information) then pass the
-                    # log on unredacted.
-                    self._log.debug('path={}, query={}, body={}'.format(
-                        path, kwargs.get('params', {}), kwargs.get('json', {})))
-                else:
-                    # The path was a restricted path, generate the log, however
-                    # redact the information.
-                    self._log.debug('path={}, query={}, body={}'.format(
-                        path, 'REDACTED', 'REDACTED'))
+            if path not in self._restricted_paths:
+                # If the path is not one of the paths that would contain
+                # sensitive data (such as login information) then pass the
+                # log on un-redacted.
+                self._log.debug(json.dumps({
+                        'method': method,
+                        'url': '{}/{}'.format(self._url, path),
+                        'params': kwargs.get('params', {}),
+                        'body': kwargs.get('json', {})
+                    })
+                )
+            else:
+                # The path was a restricted path, generate the log, however
+                # redact the information.
+                self._log.debug(json.dumps({
+                        'method': method,
+                        'url': '{}/{}'.format(self._url, path),
+                        'params': 'REDACTED',
+                        'body': 'REDACTED'
+                    })
+                )
 
             # Make the call to the API and pull the status code.
-            resp = self._session.request(method,
-                '{}/{}'.format(self._url, path), **kwargs)
-            status = resp.status_code
-
-            # If there is a Request UUID then we will want to log the UUID just
-            # incase we may need it for tracking down what happened within the
-            if resp.headers.get('x-request-uuid'):
-                self._log.debug('Request-UUID {} for {}'.format(
-                    resp.headers.get('x-request-uuid'),
-                    '{}/{}'.format(self._url, path)))
-
-            if status in retry_codes:
-                # Under the following return codes, we will want to attempt to
-                # retry our call.  If we see the "Retry-After" header, then we
-                # will respect that.  If no "Retry-After" header exists, then
-                # we will use the _backoff attribute to build a back-off timer
-                # based on the number of retries we have already performed.
+            try:
+                resp = self._session.request(method,
+                    '{}/{}'.format(self._url, path), **kwargs)
+                status = resp.status_code
+            except RequestsConnectionError as err:
+                self._log.error('Connection Reset {}'.format(str(err)))
+                time.sleep(0.1)
                 retries += 1
-                time.sleep(float(resp.headers.get(
-                    'retry-after', float(retries) * float(self._backoff))))
-
-                # The need to potentially modify the request for subsequent
-                # calls if the whole reason that we aren't using the default
-                # Retry logic that urllib3 supports.
-                kwargs = self._retry_request(resp, retries, kwargs)
-                continue
-
-            elif status in self._error_codes.keys():
-                # If a status code that we know about has returned, then we will
-                # want to raise the appropriate Error.
-                raise self._error_codes[status](resp)
-
-            elif status >= 200 and status <= 299:
-                # As everything looks ok, lets pass the response on to the error
-                # checker and then return the response.
-                return self._resp_error_check(resp, **kwargs)
-
             else:
-                # If all else fails, raise an error stating that we don't even
-                # know whats happening.
-                raise UnknownError(resp)
+                # If there is a Request UUID then we will want to log the UUID
+                # just incase we may need it for tracking down what happened
+                # within the
+                if resp.headers.get('x-request-uuid'):
+                    self._log.debug('Request-UUID {} for {}'.format(
+                        resp.headers.get('x-request-uuid'),
+                        '{}/{}'.format(self._url, path)))
+
+                if status in retry_codes:
+                    # Under the following return codes, we will want to attempt
+                    # to retry our call.  If we see the "Retry-After" header,
+                    # then we will respect that.  If no "Retry-After" header
+                    # exists, then we will use the _backoff attribute to build
+                    # a back-off timer based on the number of retries we have
+                    # already performed.
+                    retries += 1
+                    time.sleep(float(resp.headers.get(
+                        'retry-after', float(retries) * float(self._backoff))))
+
+                    # The need to potentially modify the request for subsequent
+                    # calls if the whole reason that we aren't using the default
+                    # Retry logic that urllib3 supports.
+                    kwargs = self._retry_request(resp, retries, kwargs)
+                    continue
+
+                elif status in self._error_codes.keys():
+                    # If a status code that we know about has returned, then we
+                    # will want to raise the appropriate Error.
+                    raise self._error_codes[status](resp)
+
+                elif status >= 200 and status <= 299:
+                    # As everything looks ok, lets pass the response on to the
+                    # error checker and then return the response.
+                    return self._resp_error_check(resp, **kwargs)
+
+                else:
+                    # If all else fails, raise an error stating that we don't
+                    # even know whats happening.
+                    raise UnknownError(resp)
         raise RetryError(resp, retries)
 
     def get(self, path, **kwargs):

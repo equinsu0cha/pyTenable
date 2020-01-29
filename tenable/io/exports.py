@@ -13,9 +13,10 @@ Methods available on ``tio.exports``:
     .. automethod:: assets
     .. automethod:: vulns
 '''
-from .base import TIOEndpoint, APIResultsIterator
+from .base import TIOEndpoint, APIResultsIterator, UnexpectedValueError
 from tenable.errors import TioExportsError
-import time
+from ipaddress import IPv4Network, AddressValueError
+import time, ipaddress, sys
 
 class ExportsIterator(APIResultsIterator):
     '''
@@ -63,11 +64,13 @@ class ExportsIterator(APIResultsIterator):
         if len(self.chunks) < 1:
             status = get_status()
 
+            backoff_counter = 1
             # if the export is still processing, but there aren't any chunks for
             # us to process yet, then we will wait here in a loop and call for
             # status once a second until we get something else to work on.
             while len(status['chunks_unfinished']) < 1:
-                time.sleep(1)   # wait 1 second
+                backoff_counter += 1
+                time.sleep(backoff_counter if backoff_counter < 30 else 30)
                 status = get_status()
 
             # now that we have some chunks to work on, lets refresh the local
@@ -122,7 +125,7 @@ class ExportsAPI(TIOEndpoint):
                 last seen.  Format is a unix timestamp integer.
             num_assets (int, optional):
                 Specifies the number of assets returned per-chunk.  If nothing is
-                specified, it will default to 50 assets.
+                specified, it will default to 500 assets.
             plugin_family (list, optional):
                 list of plugin families to restrict the export to.  values are
                 interpreted with an insensitivity to case.
@@ -187,7 +190,7 @@ class ExportsAPI(TIOEndpoint):
                 payload['filters'][option] = kw[option]
 
         payload['num_assets'] = str(self._check('num_assets',
-            kw['num_assets'] if 'num_assets' in kw else None, int, default=50))
+            kw['num_assets'] if 'num_assets' in kw else None, int, default=500))
 
         if 'severity' in kw and self._check('severity', kw['severity'], list,
                 choices=['info', 'low', 'medium', 'high', 'critical'], case='lower'):
@@ -202,7 +205,25 @@ class ExportsAPI(TIOEndpoint):
             payload['filters']['plugin_family'] = kw['plugin_family']
 
         if 'cidr_range' in kw and self._check('cidr_range', kw['cidr_range'], str):
-            payload['filters']['cidr_range'] = kw['cidr_range']
+            cidr = kw['cidr_range']
+
+            # if the python version is less than 3, then we will need to
+            # recast it as a unicode string.
+            if sys.version_info < (3, 0):
+                cidr = unicode(cidr)
+
+            # Validate the cidr_range attribute as an actual CIDR range.  If it
+            # returns an error back to us, then we can safely assume that it's
+            # not a valid CIDR and throw a UnexpectedValueError informing the
+            # caller of the mistake.
+            try:
+                network = IPv4Network(cidr)
+            except ValueError:
+                raise UnexpectedValueError('{} is not a valid CIDR'.format(cidr))
+
+            # Assuming everything has passed, then we will add the filter to the
+            # filters dictionary.
+            payload['filters']['cidr_range'] = str(network)
 
         if 'tags' in kw and self._check('tags', kw['tags'], list):
             # if any tags were specified, then we will iterate through the list
@@ -241,7 +262,7 @@ class ExportsAPI(TIOEndpoint):
         Args:
             chunk_size (int, optional):
                 Specifies the number of objects returned per-chunk.  If nothing is
-                specified, it will default to 50 objects.
+                specified, it will default to 1000 objects.
             created_at (int, optional):
                 Returns all assets created after the specified unix timestamp.
             updated_at (int, optional):
@@ -303,7 +324,7 @@ class ExportsAPI(TIOEndpoint):
         payload = {'filters': dict()}
         payload['chunk_size'] = self._check('chunk_size',
             kw['chunk_size'] if 'chunk_size' in kw else None,
-            int, default=100)
+            int, default=1000)
 
 
         # Instead of a long and drawn-out series of if statements for all of

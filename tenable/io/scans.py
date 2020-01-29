@@ -17,27 +17,52 @@ Methods available on ``tio.scans``:
     .. automethod:: delete
     .. automethod:: delete_history
     .. automethod:: details
-    .. automethod:: results
     .. automethod:: export
+    .. automethod:: history
     .. automethod:: host_details
     .. automethod:: import_scan
+    .. automethod:: info
     .. automethod:: launch
     .. automethod:: list
     .. automethod:: pause
     .. automethod:: plugin_output
-    .. automethod:: set_read_status
+    .. automethod:: results
     .. automethod:: resume
     .. automethod:: schedule
+    .. automethod:: set_read_status
     .. automethod:: status
     .. automethod:: stop
     .. automethod:: timezones
 '''
-from .base import TIOEndpoint
+from .base import TIOEndpoint, TIOIterator
 from tenable.utils import dict_merge, policy_settings
 from tenable.errors import UnexpectedValueError, FileDownloadError
 from datetime import datetime, timedelta
 from io import BytesIO
 import time
+
+
+class ScanHistoryIterator(TIOIterator):
+    '''
+    The agents iterator provides a scalable way to work through scan history
+    result sets of any size.  The iterator will walk through each page of data,
+    returning one record at a time.  If it reaches the end of a page of
+    records, then it will request the next page of information and then continue
+    to return records from the next page (and the next, and the next) until the
+    counter reaches the total number of records that the API has reported.
+
+    Attributes:
+        count (int): The current number of records that have been returned
+        page (list):
+            The current page of data being walked through.  pages will be
+            cycled through as the iterator requests more information from the
+            API.
+        page_count (int): The number of record returned from the current page.
+        total (int):
+            The total number of records that exist for the current request.
+    '''
+    pass
+
 
 class ScansAPI(TIOEndpoint):
     def _block_while_running(self, scan_id, sleeper=5):
@@ -83,27 +108,24 @@ class ScansAPI(TIOEndpoint):
         # If a policy UUID is sent, then we will set the scan template UUID to
         # be the UUID that was specified.
         if 'policy' in kw:
-            try:
-                # at first we are going to assume that the information that was
-                # relayed to use for the scan policy was the policy ID.  As
-                # this is the least expensive thing to check for, it's a logical
-                # starting point.
-                scan['settings']['policy_id'] = self._check(
-                    'policy', kw['policy'], int)
+            policies = self._api.policies.list()
+            match = False
 
-            except (UnexpectedValueError, TypeError):
-                # Now we are going to attempt to find the scan policy based on
-                # the title of the policy before giving up and throwing. an
-                # UnexpectedValueError
-                policies = self._api.policies.list()
-                match = False
-                for item in policies:
-                    if kw['policy'] == item['name']:
-                        scan['uuid'] = item['template_uuid']
-                        scan['settings']['policy_id'] = item['id']
-                        match = True
-                if not match:
-                    raise UnexpectedValueError('policy setting is invalid.')
+            # Here we are going to iterate over each policy in the list, looking
+            # to see if we see a match in either the name or the id.  If we do
+            # find a match, then we will use the first one that matches, pull
+            # the editor config, and then use the policy id and scan policy
+            # template uuid.
+            for item in policies:
+                if kw['policy'] in [item['name'], item['id']] and not match:
+                    policy_tmpl = self._api.editor.details('scan/policy', item['id'])
+                    scan['uuid'] = policy_tmpl['uuid']
+                    scan['settings']['policy_id'] = item['id']
+                    match = True
+
+            # if no match was discovered, then raise an invalid warning.
+            if not match:
+                raise UnexpectedValueError('policy setting is invalid.')
             del(kw['policy'])
 
         # if the scanner attribute was set, then we will attempt to figure out
@@ -368,6 +390,38 @@ class ScansAPI(TIOEndpoint):
         '''
         self._api.delete('scans/{}'.format(self._check('scan_id', scan_id, int)))
 
+    def history(self, id, limit=None, offset=None, pages=None):
+        '''
+        Get the scan history of a given scan from Tenable.io.
+
+        :devportal:`scans: history <scans-history>`
+
+        Args:
+            id (int):
+                The unique identifier for the scan.
+            limit (int, optional):
+                The number of records to retrieve.  Default is 50
+            offset (int, optional):
+                The starting record to retrieve.  Default is 0.
+
+        Returns:
+            :obj:`ScanHistoryIterator`:
+                An iterator that handles the page management of the requested
+                records.
+
+        Examples:
+            >>> for history in tio.scans.history(1):
+            ...     pprint(history)
+        '''
+        return ScanHistoryIterator(self._api,
+            _limit=limit if limit else 50,
+            _offset=offset if offset else 0,
+            _pages_total=pages,
+            _query=dict(),
+            _path='scans/{}/history'.format(self._check('id', id, int)),
+            _resource='history'
+        )
+
     def delete_history(self, scan_id, history_id):
         '''
         Remove an instance of a scan from a scan history.
@@ -397,6 +451,13 @@ class ScansAPI(TIOEndpoint):
         credentials are populated into the 'current' sub-document for the
         relevant resources.
 
+        .. important::
+            Please note that the details method is reverse-engineered from the
+            responses from the editor API, and while we are reasonably sure that
+            the response should align almost exactly to what the API expects to
+            be pushed to it, this method by very nature of what it's doing isn't
+            guaranteed to always work.
+
         Args:
             scan_id (int): The unique identifier for the scan.
 
@@ -407,74 +468,8 @@ class ScansAPI(TIOEndpoint):
         Examples:
             >>> scan = tio.scans.details(1)
             >>> pprint(scan)
-
-        Please note that flatten_scan is reverse-engineered from the responses
-        from the editor API and isn't guaranteed to work.
         '''
-
-        # Get the editor object
-        editor = self._api.get('editor/scan/{}'.format(
-            self._check('scan_id', scan_id, int))).json()
-
-        # define the initial skeleton of the scan object
-        scan = {
-            'settings': policy_settings(editor['settings']),
-            'uuid': editor['uuid']
-        }
-
-        # graft on the basic settings that aren't stored in any input sections.
-        for item in editor['settings']['basic']['groups']:
-            for setting in item.keys():
-                if setting not in ['name', 'title', 'inputs']:
-                    scan['settings'][setting] = item[setting]
-
-        if 'credentials' in editor:
-            # if the credentials sub-document exists, then lets walk down the
-            # credentials dataset
-            scan['credentials'] = {
-                'current': self._api.editor.parse_creds(
-                    editor['credentials']['data'])
-            }
-
-            # We also need to gather the settings from the various credential
-            # settings that are unique to the scan.
-            for ctype in editor['credentials']['data']:
-                for citem in ctype['types']:
-                    if 'settings' in citem and citem['settings']:
-                        scan['settings'] = dict_merge(
-                            scan['settings'], policy_settings(
-                                citem['settings']))
-
-        if 'compliance' in editor:
-            # if the audits sub-document exists, then lets walk down the
-            # audits dataset.
-            scan['compliance'] = {
-                'current': self._api.editor.parse_audits(
-                    editor['compliance']['data'])
-            }
-
-            # We also need to add in the "compliance" settings into the scan
-            # settings.
-            for item in editor['compliance']['data']:
-                if 'settings' in item:
-                    scan['settings'] = dict_merge(
-                        scan['settings'], policy_settings(
-                            item['settings']))
-
-        if 'plugins' in editor:
-            # if the plugins sub-document exists, then lets walk down the
-            # plugins dataset.
-            scan['plugins'] = self._api.editor.parse_plugins(
-                editor['plugins']['families'], scan_id)
-
-        # We next need to do a little post-parsing of the ACLs to find the
-        # owner and put owner_id attribute into the appropriate location.
-        for acl in scan['settings']['acls']:
-            if acl['owner'] == 1:
-                scan['settings']['owner_id'] = acl['id']
-
-        # return the scan document to the caller.
-        return scan
+        return self._api.editor.details('scan', scan_id)
 
     def results(self, scan_id, history_id=None):
         '''
@@ -545,6 +540,9 @@ class ScansAPI(TIOEndpoint):
                 Are the filters exclusive (this AND this AND this) or inclusive
                 (this OR this OR this).  Valid values are `and` and `or`.  The
                 default setting is `and`.
+            scan_type (str, optional):
+                This parameter is required only when using the API with
+                Web Application Scanning. Available option is 'web-app'.
             fobj (FileObject, optional):
                 The file-like object to be returned with the exported data.  If
                 no object is specified, a BytesIO object is returned with the
@@ -577,10 +575,16 @@ class ScansAPI(TIOEndpoint):
         payload = self._parse_filters(filters,
             self._api.filters.scan_filters(), rtype='sjson')
         params = dict()
+        dl_params = dict()
 
         if 'history_id' in kw:
             params['history_id'] = self._check(
                 'history_id', kw['history_id'], int)
+
+        # Enable exporting of Web Application scans.
+        if 'scan_type' in kw:
+            dl_params['type'] = params['type'] = self._check(
+                'type', kw['scan_type'], str, choices=['web-app'])
 
         if 'password' in kw:
             payload['password'] = self._check('password', kw['password'], str)
@@ -623,12 +627,12 @@ class ScansAPI(TIOEndpoint):
         # ready.
         status = self._wait_for_download(
             'scans/{}/export/{}/status'.format(scan_id, fid),
-            'scans', scan_id, fid)
+            'scans', scan_id, fid, params=dl_params)
 
         # Now that the status has reported back as "ready", we can actually
         # download the file.
         resp = self._api.get('scans/{}/export/{}/download'.format(
-            scan_id, fid), stream=True)
+            scan_id, fid), params=dl_params, stream=True)
 
         # Lets stream the file into the file-like object...
         for chunk in resp.iter_content(chunk_size=1024):
@@ -989,9 +993,9 @@ class ScansAPI(TIOEndpoint):
                 The metadata about the scan instance specified.
 
         Examples:
-            >>> info = tio.scans.info(1, 1)
+            >>> info = tio.scans.info(1, 'BA0ED610-C27B-4096-A8F4-3189279AFFE7')
         '''
         return self._api.get('scans/{}/history/{}'.format(
             self._check('scan_id', scan_id, int),
-            self._check('history_uuid', history_uuid, int))).json()
+            self._check('history_uuid', history_uuid, 'scanner-uuid'))).json()
 

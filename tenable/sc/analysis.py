@@ -129,7 +129,7 @@ class AnalysisResultsIterator(SCResultsIterator):
         if page_size == records and total_records:
             self.total = int(total_records)
         else:
-            self._log.warn(' '.join([
+            self._log.warning(' '.join([
                 'API Recordkeeping error.',
                 'api_total={},'.format(str(total_records)),
                 'api_count={},'.format(str(records)),
@@ -153,7 +153,7 @@ class AnalysisAPI(SCEndpoint):
         '''
 
         offset = 0
-        limit = 200
+        limit = 1000
         pages = None
 
         # Call the query constructor to build the query if necessary./

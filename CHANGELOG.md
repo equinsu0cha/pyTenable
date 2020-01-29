@@ -4,9 +4,110 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5]
+### Fixed
+- Documentation Examples for TenableSC.feeds use feed instead of feeds #178
+- Documentation Examples for TenableSC.files used feed instead of files. #179
+- TenableSC.credentials used the incorrect parameter for oracleAuthType. #180
+
+## [1.0.4]
+### Fixed
+- TenableSC.AssetListAPI constructor improperly referred to fobj instead of kw['fobj'] #177
+- TenableSC.ScannerAPI.edit improperly attempted to merge the scanner details into the PATCH call #176
+
+### Changed
+- Increased default chunk sizing for TenableIO.exports.assets to 1000
+- Increased default num_assets chunk sizing for TenableIO.exports.vulns to 500
+- Increased default page sizing for TenableSC.analysis calls to 1000
+- Improved debug logs for all API calls.  Debug logs now effectively log before, during, and after.
+- Improved debug log format.  Pre-Request logs now output a standard JSON format.
+
+## [1.0.3]
+### Added
+- Will now attempt to retry on lower-level ConnectionErrors.
+
+### Changed
+- ExportIterator will now backoff on status calls up to 30 seconds between calls.
+
+## [1.0.2]
+### Added
+- Exporting WAS scans nor functions as intended. #175
+
+### Fixed
+- TenableIO.TagAPI filter check erroneously used self.check instead of self._check
+
+
+## [1.0.1]
+### Added
+- API Key support for TenableSC as Tenable.sc version 5.13 introduced key support.
+- TenableSC now supports context management for authentication. (with TenableSC...)
+- Dyanamic tag filter field support for TenableIO.tags create and edit methods. #174
+
+### Changed
+- TenableSC.login user && passwd parameters now called username && password
+
+## [1.0.0]
+### Changed
+- Upped Revision on 0.3.29
+
+### Added
+- Testing in travis for Python 3.7 and 3.8
+
+## [0.3.29]
+### Fixed
+- New UA String code was failing on windows hosts as os.uname isn't x-platform #164
+- Implicit "all" hostType was not set when creating an accepted risk. #162
+
+## [0.3.28]
+### Changed
+- Converted to new UA String format in an effort to normalize UA strings.
+
+## [0.3.37]
+### Changed
+- Query filters can now be overloadable and removable for TenableSC.analysis
+
+### Fixed
+- Documentation was incorrectly calling the wrong method #156
+- Incorrect timezone documentation for SC #145
+- repeatRule parameter for schedules was incorrectly documented as rrule #144
+- host_tracking for scans constructor was documented, however unimplemented #152
+- Unable to set the max scan time to unlimited #149
+
+
+## [0.3.26]
+### Fixed
+- Failed to add necessary requirement for the "ipaddress" python package.
+
+## [0.3.25]
+### Added
+- Added the Tenable.io ScansAPI.history endpoint #141
+- Added the ability for Tenable.io's PolicyAPI.list() iterator to graft on plugin family details.
+
+### Fixed
+- Spelling type in Tenable.sc ScansAPI.launch when generating diagnostic passwords #142
+- Incorrect policy UUID passed to scans created in Tenable.io w/ an existing policy. #143
+
+
+## [0.3.24]
+### Changed
+- Switched the Nessusv2 file parser to diffusedxml per recommendation with bandit
+
+### Fixed
+- TenableSC SSL verification flags were not set in the session builder, which meant that login was a one-time event. #139
+
+
 ## [0.3.23]
 ### Changed
-- Improved documentation for creating scans to include
+- Improved documentation for creating scans to include credentials
+
+### Added
+- Tenable.io Access Group API Added and Tested #98
+- Tenable.io Networks API Added and Tested #129
+- Tenable.io Managed Credentials API Added and Tested #130
+
+### Fixed
+- tio.policies.template_details wasn't correctly constructing the document from the editor API #136
+- tio.agent_groups.list was missing from the documentation
 
 
 ## [0.3.22]
@@ -328,7 +429,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Fixed Time Conversion Issue #6
 
-[Unreleased]: https://github.com/tenable/pyTenable/compare/0.3.22...master
+[Unreleased]: https://github.com/tenable/pyTenable/compare/1.0.5...master
+[1.0.5]: https://github.com/tenable/pyTenable/compare/1.0.4...1.0.5
+[1.0.4]: https://github.com/tenable/pyTenable/compare/1.0.3...1.0.4
+[1.0.3]: https://github.com/tenable/pyTenable/compare/1.0.2...1.0.3
+[1.0.2]: https://github.com/tenable/pyTenable/compare/1.0.1...1.0.2
+[1.0.1]: https://github.com/tenable/pyTenable/compare/1.0.0...1.0.1
+[1.0.0]: https://github.com/tenable/pyTenable/compare/0.3.29...1.0.0
+[0.3.29]: https://github.com/tenable/pyTenable/compare/0.3.28...0.3.29
+[0.3.28]: https://github.com/tenable/pyTenable/compare/0.3.27...0.3.28
+[0.3.27]: https://github.com/tenable/pyTenable/compare/0.3.26...0.3.27
+[0.3.26]: https://github.com/tenable/pyTenable/compare/0.3.25...0.3.26
+[0.3.25]: https://github.com/tenable/pyTenable/compare/0.3.24...0.3.25
+[0.3.24]: https://github.com/tenable/pyTenable/compare/0.3.23...0.3.24
+[0.3.23]: https://github.com/tenable/pyTenable/compare/0.3.22...0.3.23
 [0.3.22]: https://github.com/tenable/pyTenable/compare/0.3.21...0.3.22
 [0.3.21]: https://github.com/tenable/pyTenable/compare/0.3.20...0.3.21
 [0.3.20]: https://github.com/tenable/pyTenable/compare/0.3.19...0.3.20
